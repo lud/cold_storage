@@ -3,11 +3,7 @@ defmodule ColdStorageTest do
   doctest ColdStorage
 
   setup do
-    # Use a unique directory for each test to avoid interference
-    test_dir =
-      Path.join(System.tmp_dir!(), "cold-storage-test-#{:erlang.unique_integer([:positive])}")
-
-    on_exit(fn -> File.rm_rf!(test_dir) end)
+    {:ok, test_dir} = Briefly.create(type: :directory)
     {:ok, test_dir: test_dir}
   end
 

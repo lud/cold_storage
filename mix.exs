@@ -18,6 +18,8 @@ defmodule ColdStorage.MixProject do
   end
 
   defp deps do
-    []
+    [
+      {:briefly, "~> 0.5.1", only: [:test]}
+    ]
   end
 end
