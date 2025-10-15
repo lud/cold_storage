@@ -158,7 +158,7 @@ ColdStorage stores each cached value as a separate file:
 3. Files are stored in `<dir>/<version>/<hash>`
 
 For example:
-```
+```text
 /tmp/my-cache/
   ├── 1/
   │   ├── A1B2C3D4E5F6...

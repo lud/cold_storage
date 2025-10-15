@@ -1,14 +1,21 @@
 defmodule ColdStorage.MixProject do
   use Mix.Project
 
+  @source_url "https://github.com/lud/cold_storage"
+  @version "0.11.2"
+
   def project do
     [
       app: :cold_storage,
-      version: "0.1.0",
+      description: "A simple hard drive persistent cache for scripting purposes.",
+      version: @version,
       elixir: "~> 1.15",
       start_permanent: Mix.env() == :prod,
+      source_url: @source_url,
       deps: deps(),
-      dialyzer: dialyzer()
+      dialyzer: dialyzer(),
+      package: package(),
+      docs: docs()
     ]
   end
 
@@ -44,5 +51,28 @@ defmodule ColdStorage.MixProject do
       plt_add_apps: [:ex_unit, :mix, :jsv],
       plt_local_path: "_build/plts"
     ]
+  end
+
+  defp package do
+    [
+      licenses: ["MIT"],
+      links: %{
+        "Github" => @source_url,
+        "Changelog" => "#{@source_url}/blob/main/CHANGELOG.md"
+      }
+    ]
+  end
+
+  defp docs do
+    [
+      main: "readme",
+      source_ref: "v#{@version}",
+      source_url: @source_url,
+      extras: doc_extras()
+    ]
+  end
+
+  def doc_extras do
+    ["README.md", "CHANGELOG.md"]
   end
 end
