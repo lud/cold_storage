@@ -65,10 +65,15 @@ defmodule ColdStorage do
   ## Examples
 
       iex> ColdStorage.filename("my-key")
-      "61BA747FE2F5B3D513C40550084C6284FBBC1094"
+      "4F3CC66870A9B2E4F0DB0ABCB51EFB6F365BE79F"
 
   """
-  def filename(key), do: Base.encode16(:crypto.hash(:sha, key))
+  def filename(key) do
+    key
+    |> :erlang.term_to_binary([{:compressed, 0}, :deterministic])
+    |> case(do: (bin -> :crypto.hash(:sha, bin)))
+    |> Base.encode16()
+  end
 
   @doc """
   Retrieves a cached value or generates and caches it if not present.
@@ -220,7 +225,7 @@ defmodule ColdStorage do
 
       iex> cs = ColdStorage.new(dir: "/tmp/cache", vsn: 1)
       iex> ColdStorage.path_of(cs, "my-key")
-      "/tmp/cache/1/61BA747FE2F5B3D513C40550084C6284FBBC1094"
+      "/tmp/cache/1/4F3CC66870A9B2E4F0DB0ABCB51EFB6F365BE79F"
 
   """
   def path_of(cs, key) do

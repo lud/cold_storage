@@ -57,6 +57,10 @@ defmodule ColdStorageTest do
       # SHA-1 produces 40 hex characters (160 bits / 4 bits per hex char)
       assert String.length(filename) == 40
     end
+
+    test "generates hash for any valid term" do
+      assert is_binary(ColdStorage.filename([{:a, 1, fn -> :ok end}, %{a: 1, b: %{c: self()}}]))
+    end
   end
 
   describe "cache_dir/1" do
