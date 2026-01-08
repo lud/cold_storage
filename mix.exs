@@ -15,7 +15,8 @@ defmodule ColdStorage.MixProject do
       deps: deps(),
       dialyzer: dialyzer(),
       package: package(),
-      docs: docs()
+      docs: docs(),
+      versioning: versioning()
     ]
   end
 
@@ -48,7 +49,7 @@ defmodule ColdStorage.MixProject do
       flags: [:unmatched_returns, :error_handling, :unknown, :extra_return],
       list_unused_filters: true,
       plt_add_deps: :app_tree,
-      plt_add_apps: [:ex_unit, :mix, :jsv],
+      plt_add_apps: [:ex_unit, :mix],
       plt_local_path: "_build/plts"
     ]
   end
@@ -74,5 +75,22 @@ defmodule ColdStorage.MixProject do
 
   def doc_extras do
     ["README.md", "CHANGELOG.md"]
+  end
+
+  defp versioning do
+    [
+      annotate: true,
+      before_commit: [
+        &gen_changelog/1,
+        {:add, "CHANGELOG.md"}
+      ]
+    ]
+  end
+
+  defp gen_changelog(vsn) do
+    case System.cmd("git", ["cliff", "--tag", vsn, "-o", "CHANGELOG.md"], stderr_to_stdout: true) do
+      {_, 0} -> IO.puts("Updated CHANGELOG.md with #{vsn}")
+      {out, _} -> {:error, "Could not update CHANGELOG.md:\n\n #{out}"}
+    end
   end
 end

@@ -20,7 +20,7 @@ defmodule ColdStorage do
 
   """
 
-  @enforce_keys [:dir, :vsn]
+  @enforce_keys [:dir, :vsn, :enabled]
   defstruct @enforce_keys
 
   @doc """
@@ -36,20 +36,22 @@ defmodule ColdStorage do
     * `:vsn` - The cache version appended to cache paths as a path segment.
       Accepts anything that returns a valid unix directory name when given to
       `Kernel.to_string/1`. Defaults to `1`.
+    * `:enabled` - Whether the cache is enabled. Defaults to `true`.
 
   ## Examples
 
       iex> ColdStorage.new()
-      %ColdStorage{dir: "/tmp/cold-storage", vsn: 1}
+      %ColdStorage{dir: "/tmp/cold-storage", vsn: 1, enabled: true}
 
-      iex> ColdStorage.new(dir: "/var/cache", vsn: "my-cache-1")
-      %ColdStorage{dir: "/var/cache", vsn: "my-cache-1"}
+      iex> ColdStorage.new(dir: "/var/cache", vsn: "my-cache-1", enabled: false)
+      %ColdStorage{dir: "/var/cache", vsn: "my-cache-1", enabled: false}
 
   """
   def new(opts \\ []) do
     dir = Keyword.get_lazy(opts, :dir, &default_dir/0)
     vsn = Keyword.get(opts, :vsn, 1)
-    %__MODULE__{dir: dir, vsn: vsn}
+    enabled = Keyword.get(opts, :enabled, true)
+    %__MODULE__{dir: dir, vsn: vsn, enabled: enabled}
   end
 
   defp default_dir do
@@ -152,6 +154,9 @@ defmodule ColdStorage do
   @doc """
   Fetches a value from the cache.
 
+  If the cache is disabled (`enabled: false`), this function always returns `:miss`,
+  even if a valid cache file exists.
+
   Returns `{:hit, value}` if the value is found in the cache, or `:miss` if not.
   Raises an error if the cache file cannot be read (except for `:enoent`).
 
@@ -177,6 +182,8 @@ defmodule ColdStorage do
       {:hit, "my-value"}
 
   """
+  def fetch_cache(%{enabled: false}, _key), do: :miss
+
   def fetch_cache(cs, key) do
     path = path_of(cs, key)
 
@@ -189,6 +196,8 @@ defmodule ColdStorage do
 
   @doc """
   Stores a value in the cache.
+
+  If the cache is disabled (`enabled: false`), this function does nothing and returns `:ok`.
 
   Creates the cache directory if it doesn't exist and writes the serialized
   value to the cache file.
@@ -206,6 +215,8 @@ defmodule ColdStorage do
       :ok
 
   """
+  def put_cache(%{enabled: false}, _key, _value), do: :ok
+
   def put_cache(cs, key, value) do
     path = path_of(cs, key)
     File.mkdir_p!(Path.dirname(path))

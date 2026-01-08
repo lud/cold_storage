@@ -31,6 +31,53 @@ defmodule ColdStorageTest do
       assert cs.dir == test_dir
       assert cs.vsn == 42
     end
+
+    test "creates a ColdStorage struct with enabled: false" do
+      cs = ColdStorage.new(enabled: false)
+      assert cs.enabled == false
+    end
+
+    test "defaults enabled to true" do
+      cs = ColdStorage.new()
+      assert cs.enabled == true
+    end
+  end
+
+  describe "when disabled" do
+    test "put_cache does not write to file", %{test_dir: test_dir} do
+      cs = ColdStorage.new(dir: test_dir, enabled: false)
+
+      assert :ok = ColdStorage.put_cache(cs, "key", "value")
+
+      # Should not create directory or file
+      refute File.exists?(Path.join(test_dir, "1"))
+    end
+
+    test "fetch_cache returns :miss even if file exists", %{test_dir: test_dir} do
+      # Setup: write a file using an enabled cache
+      cs_enabled = ColdStorage.new(dir: test_dir, vsn: 1)
+      ColdStorage.put_cache(cs_enabled, "key", "value")
+      assert {:hit, "value"} = ColdStorage.fetch_cache(cs_enabled, "key")
+
+      # Test: try to read it with a disabled cache
+      cs_disabled = ColdStorage.new(dir: test_dir, vsn: 1, enabled: false)
+      assert :miss = ColdStorage.fetch_cache(cs_disabled, "key")
+    end
+
+    test "cached/3 always runs generator", %{test_dir: test_dir} do
+      cs = ColdStorage.new(dir: test_dir, enabled: false)
+
+      # First run
+      assert "val" == ColdStorage.cached(cs, "key", fn -> {:cache, "val"} end)
+
+      # Second run - should run generator again because it wasn't cached/read
+      result =
+        ColdStorage.cached(cs, "key", fn ->
+          {:cache, "new-val"}
+        end)
+
+      assert result == "new-val"
+    end
   end
 
   describe "filename/1" do
