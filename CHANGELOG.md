@@ -2,11 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
-## [unreleased]
+## [0.12.0] - 2026-01-08
+
+### 🚀 Features
+
+- Added :enabled option
+
+## [0.11.3] - 2025-10-20
 
 ### 🚀 Features
 
 - Init prototype
+- A key can now be any term
 
 ### 🧪 Testing
 
@@ -18,5 +25,6 @@ All notable changes to this project will be documented in this file.
 - Disable github dependency submission
 - Relax minimum Elixir version
 - Readme and license
+- Packaging
 
 
