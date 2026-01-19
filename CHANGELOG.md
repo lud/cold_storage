@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.13.0] - 2026-01-19
+
+### 🚀 Features
+
+- Added typespecs
+
 ## [0.12.0] - 2026-01-08
 
 ### 🚀 Features
@@ -26,5 +32,4 @@ All notable changes to this project will be documented in this file.
 - Relax minimum Elixir version
 - Readme and license
 - Packaging
-
 
