@@ -23,6 +23,9 @@ defmodule ColdStorage do
   @enforce_keys [:dir, :vsn, :enabled]
   defstruct @enforce_keys
 
+  @type t :: %__MODULE__{dir: String.t(), vsn: integer() | binary(), enabled: boolean()}
+  @type option :: {:dir, String.t()} | {:vsn, integer() | binary()} | {:enabled, boolean()}
+
   @doc """
   Creates a new ColdStorage configuration.
 
@@ -47,6 +50,7 @@ defmodule ColdStorage do
       %ColdStorage{dir: "/var/cache", vsn: "my-cache-1", enabled: false}
 
   """
+  @spec new([option]) :: t
   def new(opts \\ []) do
     dir = Keyword.get_lazy(opts, :dir, &default_dir/0)
     vsn = Keyword.get(opts, :vsn, 1)
@@ -54,6 +58,7 @@ defmodule ColdStorage do
     %__MODULE__{dir: dir, vsn: vsn, enabled: enabled}
   end
 
+  @spec default_dir() :: String.t()
   defp default_dir do
     Path.join(System.tmp_dir!(), "cold-storage")
   end
@@ -70,6 +75,7 @@ defmodule ColdStorage do
       "4F3CC66870A9B2E4F0DB0ABCB51EFB6F365BE79F"
 
   """
+  @spec filename(term) :: String.t()
   def filename(key) do
     key
     |> :erlang.term_to_binary([{:compressed, 0}, :deterministic])
@@ -102,6 +108,7 @@ defmodule ColdStorage do
       end)
 
   """
+  @spec cached(t, term, (-> {:cache, term} | {:ignore, term})) :: term
   def cached(cs, key, generator) do
     case fetch_cache(cs, key) do
       :miss ->
@@ -142,6 +149,7 @@ defmodule ColdStorage do
       {:ok, 1}
 
   """
+  @spec cached_ok(t, term, (-> {:ok, term} | term)) :: term
   def cached_ok(cs, key, generator) do
     cached(cs, key, fn ->
       case generator.() do
@@ -182,6 +190,7 @@ defmodule ColdStorage do
       {:hit, "my-value"}
 
   """
+  @spec fetch_cache(t, term) :: {:hit, term} | :miss
   def fetch_cache(%{enabled: false}, _key), do: :miss
 
   def fetch_cache(cs, key) do
@@ -215,6 +224,7 @@ defmodule ColdStorage do
       :ok
 
   """
+  @spec put_cache(t, term, term) :: :ok
   def put_cache(%{enabled: false}, _key, _value), do: :ok
 
   def put_cache(cs, key, value) do
@@ -239,6 +249,7 @@ defmodule ColdStorage do
       "/tmp/cache/1/4F3CC66870A9B2E4F0DB0ABCB51EFB6F365BE79F"
 
   """
+  @spec path_of(t, term) :: String.t()
   def path_of(cs, key) do
     Path.join(cache_dir(cs), filename(key))
   end
@@ -259,16 +270,19 @@ defmodule ColdStorage do
       "/tmp/cache/2"
 
   """
+  @spec cache_dir(t) :: String.t()
   def cache_dir(%__MODULE__{} = cs) do
     Path.join(cs.dir, to_string(cs.vsn))
   end
 
+  @spec deserialize_cache(binary()) :: {:hit, term} | :miss
   defp deserialize_cache(bin) do
     {:hit, :erlang.binary_to_term(bin)}
   rescue
     _ in ArgumentError -> :miss
   end
 
+  @spec serialize_cache(term) :: binary()
   defp serialize_cache(value) do
     :erlang.term_to_binary(value)
   end
