@@ -306,6 +306,83 @@ defmodule ColdStorageTest do
 
       assert cached_result == complex_result
     end
+
+    test "caches base value but returns enhanced value with :pcache", %{test_dir: test_dir} do
+      cs = ColdStorage.new(dir: test_dir, vsn: 1)
+
+      base_data = %{id: 1, name: "test"}
+      enhanced_data = Map.put(base_data, :timestamp, System.system_time())
+
+      result = ColdStorage.cached(cs, "key", fn -> {:pcache, base_data, enhanced_data} end)
+
+      assert result == enhanced_data
+      # Verify that base_data was cached, not enhanced_data
+      assert {:hit, ^base_data} = ColdStorage.fetch_cache(cs, "key")
+    end
+
+    test "returns cached value without generator call after :pcache", %{test_dir: test_dir} do
+      cs = ColdStorage.new(dir: test_dir, vsn: 1)
+
+      # First call with :pcache
+      ColdStorage.cached(cs, "key", fn -> {:pcache, "cached-value", "returned-value"} end)
+
+      # Second call should return cached value without calling generator
+      result =
+        ColdStorage.cached(cs, "key", fn ->
+          raise "generator should not be called"
+        end)
+
+      assert result == "cached-value"
+    end
+
+    test ":pcache with complex data structures", %{test_dir: test_dir} do
+      cs = ColdStorage.new(dir: test_dir, vsn: 1)
+
+      base = %{users: [%{id: 1}, %{id: 2}]}
+      enhanced = %{users: [%{id: 1, active: true}, %{id: 2, active: false}]}
+
+      result = ColdStorage.cached(cs, "users", fn -> {:pcache, base, enhanced} end)
+
+      assert result == enhanced
+      assert {:hit, ^base} = ColdStorage.fetch_cache(cs, "users")
+    end
+
+    test ":pcache allows different returned value each time after cache", %{test_dir: test_dir} do
+      cs = ColdStorage.new(dir: test_dir, vsn: 1)
+
+      # First call: cache base data
+      first_timestamp = System.system_time()
+      base_data = %{data: "base"}
+
+      ColdStorage.cached(cs, "key", fn ->
+        {:pcache, base_data, Map.put(base_data, :ts, first_timestamp)}
+      end)
+
+      # Manually verify cache has base data
+      assert {:hit, ^base_data} = ColdStorage.fetch_cache(cs, "key")
+
+      # Second call: returns cached base data without enhancement
+      result = ColdStorage.cached(cs, "key", fn -> raise "not called" end)
+      assert result == base_data
+    end
+
+    test ":pcache with nil values", %{test_dir: test_dir} do
+      cs = ColdStorage.new(dir: test_dir, vsn: 1)
+
+      result = ColdStorage.cached(cs, "key", fn -> {:pcache, nil, "returned"} end)
+
+      assert result == "returned"
+      assert {:hit, nil} = ColdStorage.fetch_cache(cs, "key")
+    end
+
+    test ":pcache caches even if returned value is different type", %{test_dir: test_dir} do
+      cs = ColdStorage.new(dir: test_dir, vsn: 1)
+
+      result = ColdStorage.cached(cs, "key", fn -> {:pcache, [1, 2, 3], "string"} end)
+
+      assert result == "string"
+      assert {:hit, [1, 2, 3]} = ColdStorage.fetch_cache(cs, "key")
+    end
   end
 
   describe "cached_ok/3" do
@@ -448,6 +525,176 @@ defmodule ColdStorageTest do
 
       ColdStorage.put_cache(cs, "large", large_value)
       assert {:hit, ^large_value} = ColdStorage.fetch_cache(cs, "large")
+    end
+  end
+
+  describe "with_cache/3 and with_cache/4" do
+    test "cache miss + ignore returns value without caching", %{test_dir: test_dir} do
+      cs = ColdStorage.new(dir: test_dir, vsn: 1)
+
+      result =
+        ColdStorage.with_cache(cs, "key", "default", fn val ->
+          assert val == "default"
+          {:ignore, "returned"}
+        end)
+
+      assert result == "returned"
+      assert :miss = ColdStorage.fetch_cache(cs, "key")
+    end
+
+    test "cache miss + cache stores and returns value", %{test_dir: test_dir} do
+      cs = ColdStorage.new(dir: test_dir, vsn: 1)
+
+      result =
+        ColdStorage.with_cache(cs, "key", "default", fn val ->
+          assert val == "default"
+          {:cache, "cached_value"}
+        end)
+
+      assert result == "cached_value"
+      assert {:hit, "cached_value"} = ColdStorage.fetch_cache(cs, "key")
+    end
+
+    test "cache miss + pcache stores cache_value and returns return_value", %{test_dir: test_dir} do
+      cs = ColdStorage.new(dir: test_dir, vsn: 1)
+
+      result =
+        ColdStorage.with_cache(cs, "key", %{}, fn val ->
+          assert val == %{}
+          {:pcache, %{stored: true}, %{returned: true}}
+        end)
+
+      assert result == %{returned: true}
+      assert {:hit, %{stored: true}} = ColdStorage.fetch_cache(cs, "key")
+    end
+
+    test "cache hit + ignore returns value without modifying cache", %{test_dir: test_dir} do
+      cs = ColdStorage.new(dir: test_dir, vsn: 1)
+      ColdStorage.put_cache(cs, "key", "original")
+
+      result =
+        ColdStorage.with_cache(cs, "key", "default", fn val ->
+          assert val == "original"
+          {:ignore, "returned"}
+        end)
+
+      assert result == "returned"
+      assert {:hit, "original"} = ColdStorage.fetch_cache(cs, "key")
+    end
+
+    test "cache hit + cache updates and returns value", %{test_dir: test_dir} do
+      cs = ColdStorage.new(dir: test_dir, vsn: 1)
+      ColdStorage.put_cache(cs, "key", "original")
+
+      result =
+        ColdStorage.with_cache(cs, "key", "default", fn val ->
+          assert val == "original"
+          {:cache, "updated"}
+        end)
+
+      assert result == "updated"
+      assert {:hit, "updated"} = ColdStorage.fetch_cache(cs, "key")
+    end
+
+    test "cache hit + pcache updates cache and returns different value", %{test_dir: test_dir} do
+      cs = ColdStorage.new(dir: test_dir, vsn: 1)
+      ColdStorage.put_cache(cs, "key", %{count: 1})
+
+      result =
+        ColdStorage.with_cache(cs, "key", %{}, fn val ->
+          assert val == %{count: 1}
+          updated = %{count: 2}
+          enhanced = Map.put(updated, :timestamp, :now)
+          {:pcache, updated, enhanced}
+        end)
+
+      assert result == %{count: 2, timestamp: :now}
+      assert {:hit, %{count: 2}} = ColdStorage.fetch_cache(cs, "key")
+    end
+
+    test "uses nil as default when not provided", %{test_dir: test_dir} do
+      cs = ColdStorage.new(dir: test_dir, vsn: 1)
+
+      result =
+        ColdStorage.with_cache(cs, "key", fn val ->
+          assert val == nil
+          {:cache, "value"}
+        end)
+
+      assert result == "value"
+    end
+
+    test "with disabled cache, still runs callback but doesn't write", %{test_dir: test_dir} do
+      cs = ColdStorage.new(dir: test_dir, vsn: 1, enabled: false)
+
+      # First call with :cache
+      result1 =
+        ColdStorage.with_cache(cs, "key", "default", fn val ->
+          assert val == "default"
+          {:cache, "value1"}
+        end)
+
+      assert result1 == "value1"
+
+      # Second call should still get default (not cached)
+      result2 =
+        ColdStorage.with_cache(cs, "key", "default", fn val ->
+          assert val == "default"
+          {:cache, "value2"}
+        end)
+
+      assert result2 == "value2"
+      assert :miss = ColdStorage.fetch_cache(cs, "key")
+    end
+
+    test "raises on invalid return value", %{test_dir: test_dir} do
+      cs = ColdStorage.new(dir: test_dir, vsn: 1)
+
+      assert_raise RuntimeError, ~r/with_cache callback must return/, fn ->
+        ColdStorage.with_cache(cs, "key", nil, fn _val ->
+          :invalid
+        end)
+      end
+    end
+
+    test "accumulator pattern example", %{test_dir: test_dir} do
+      cs = ColdStorage.new(dir: test_dir, vsn: 1)
+
+      # Simulate processing with accumulating query cache
+      process = fn items, query_cache ->
+        Enum.map_reduce(items, query_cache, fn item, cache ->
+          cached_result = Map.get(cache, item)
+
+          if cached_result do
+            {cached_result, cache}
+          else
+            computed = String.upcase(item)
+            {computed, Map.put(cache, item, computed)}
+          end
+        end)
+      end
+
+      # First run: nothing cached
+      {result1, _} =
+        ColdStorage.with_cache(cs, :queries, %{}, fn cache ->
+          {results, updated_cache} = process.(["a", "b"], cache)
+          {:pcache, updated_cache, {results, updated_cache}}
+        end)
+
+      assert result1 == ["A", "B"]
+      assert {:hit, %{"a" => "A", "b" => "B"}} = ColdStorage.fetch_cache(cs, :queries)
+
+      # Second run: use cached values and add new ones
+      {result2, final_cache} =
+        ColdStorage.with_cache(cs, :queries, %{}, fn cache ->
+          assert cache == %{"a" => "A", "b" => "B"}
+          {results, updated_cache} = process.(["a", "c"], cache)
+          {:pcache, updated_cache, {results, updated_cache}}
+        end)
+
+      assert result2 == ["A", "C"]
+      assert final_cache == %{"a" => "A", "b" => "B", "c" => "C"}
+      assert {:hit, ^final_cache} = ColdStorage.fetch_cache(cs, :queries)
     end
   end
 end

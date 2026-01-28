@@ -86,8 +86,10 @@ defmodule ColdStorage do
   @doc """
   Retrieves a cached value or generates and caches it if not present.
 
-  The generator function must return either `{:cache, value}` to cache the
-  result, or `{:ignore, value}` to return the value without caching it.
+  The generator function must return one of:
+    * `{:cache, value}` - to cache and return the value
+    * `{:ignore, value}` - to return the value without caching it
+    * `{:pcache, value_to_cache, returned_value}` - to cache one value but return another
 
   ## Parameters
 
@@ -95,7 +97,7 @@ defmodule ColdStorage do
     * `key` - The cache key (any term)
     * `generator` - A zero-arity function that generates the value if not cached
 
-  ## Example
+  ## Examples
 
       cs = ColdStorage.new(vsn: "cs-test")
 
@@ -107,8 +109,14 @@ defmodule ColdStorage do
         {:ignore, temporary_value()}
       end)
 
+      ColdStorage.cached(cs, "base-data", fn ->
+        base_data = fetch_base_data()
+        enhanced_data = enhance_with_current_timestamp(base_data)
+        {:pcache, base_data, enhanced_data}
+      end)
+
   """
-  @spec cached(t, term, (-> {:cache, term} | {:ignore, term})) :: term
+  @spec cached(t, term, (-> {:cache, term} | {:ignore, term} | {:pcache, term, term})) :: term
   def cached(cs, key, generator) do
     case fetch_cache(cs, key) do
       :miss ->
@@ -120,8 +128,12 @@ defmodule ColdStorage do
           {:ignore, value} ->
             value
 
+          {:pcache, value_to_cache, returned_value} ->
+            put_cache(cs, key, value_to_cache)
+            returned_value
+
           other ->
-            raise "cache generator must return either {:cache, value} or {:ignore, value}, got: #{inspect(other)}"
+            raise "cache generator must return either {:cache, value}, {:ignore, value}, or {:pcache, value_to_cache, returned_value}, got: #{inspect(other)}"
         end
 
       {:hit, value} ->
@@ -138,7 +150,7 @@ defmodule ColdStorage do
 
     * `cs` - The ColdStorage instance
     * `key` - The cache key (any term)
-    * `generator` - A zero-arity function that returns `{:ok, value}` or an error tuple
+    * `result_generator` - A zero-arity function that returns `{:ok, value}` or an error tuple
 
   ## Examples
 
@@ -150,13 +162,81 @@ defmodule ColdStorage do
 
   """
   @spec cached_ok(t, term, (-> {:ok, term} | term)) :: term
-  def cached_ok(cs, key, generator) do
+  def cached_ok(cs, key, result_generator) do
     cached(cs, key, fn ->
-      case generator.() do
+      case result_generator.() do
         {:ok, value} -> {:cache, {:ok, value}}
         other -> {:ignore, other}
       end
     end)
+  end
+
+  @doc """
+  Executes a callback with the current cached value, allowing accumulator patterns.
+
+  This function supports scenarios where you need to:
+  1. Load cached state
+  2. Process/accumulate data using that state
+  3. Optionally update the cache with modified state
+  4. Return results
+
+  The callback receives the current cached value (or the default if cache miss) and must return:
+    * `{:cache, value}` - to cache and return the value
+    * `{:ignore, value}` - to return the value without modifying the cache
+    * `{:pcache, value_to_cache, returned_value}` - to cache one value but return another
+
+  ## Parameters
+
+    * `cs` - The ColdStorage instance
+    * `key` - The cache key (any term)
+    * `default` - Default value if cache misses (defaults to `nil`)
+    * `callback` - A function that takes the cached/default value and returns a cache directive
+
+  ## Examples
+
+      cs = ColdStorage.new(vsn: "cs-test")
+
+      ColdStorage.with_cache(cs, :query_cache, %{}, fn cached_queries ->
+        {customer_results, updated_queries} = process_with_queries(customer_id, cached_queries)
+        {:pcache, updated_queries, customer_results}
+      end)
+
+      # Conditional caching: only cache if satisfactory
+      ColdStorage.with_cache(cs, :api_response, nil, fn cached ->
+        response = fetch_api()
+        if good_enough?(response, cached) do
+          {:cache, response}
+        else
+          {:ignore, cached || response}
+        end
+      end)
+
+  """
+  @spec with_cache(t, term, term, (term ->
+                                     {:cache, term} | {:ignore, term} | {:pcache, term, term})) ::
+          term
+  def with_cache(cs, key, default \\ nil, generator) do
+    current_value =
+      case fetch_cache(cs, key) do
+        :miss -> default
+        {:hit, value} -> value
+      end
+
+    case generator.(current_value) do
+      {:cache, value} ->
+        put_cache(cs, key, value)
+        value
+
+      {:ignore, value} ->
+        value
+
+      {:pcache, value_to_cache, returned_value} ->
+        put_cache(cs, key, value_to_cache)
+        returned_value
+
+      other ->
+        raise "with_cache callback must return either {:cache, value}, {:ignore, value}, or {:pcache, value_to_cache, returned_value}, got: #{inspect(other)}"
+    end
   end
 
   @doc """

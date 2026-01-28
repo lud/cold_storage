@@ -109,6 +109,52 @@ ColdStorage.cached_ok(cs, "failing-endpoint", fn ->
 end)
 ```
 
+### Working with Cached State using `with_cache/3` and `with_cache/4`
+
+The `with_cache` function is ideal for accumulator patterns where you need to:
+1. Load existing cached state
+2. Process data using that state
+3. Update the cache with modified state
+4. Return results
+
+```elixir
+cs = ColdStorage.new(vsn: 1)
+
+# Accumulator pattern: build up a query cache over multiple operations
+def process_customer_data(orga, data_points, cache) do
+  cache_key = {:query_cache, orga.id}
+
+  ColdStorage.with_cache(cache, cache_key, %{}, fn query_cache ->
+    {results, updated_cache} =
+      Enum.map_reduce(data_points, query_cache, fn point, cache ->
+        # Use cached queries if available, update cache with new ones
+        result = process_point(point, cache)
+        {result, cache}
+      end)
+
+    # Store updated cache, return results
+    {:pcache, updated_cache, results}
+  end)
+end
+
+# Conditional caching: only update if the new value is better
+ColdStorage.with_cache(cs, :best_score, 0, fn current_best ->
+  new_score = compute_score()
+
+  if new_score > current_best do
+    {:cache, new_score}
+  else
+    {:ignore, current_best}
+  end
+end)
+```
+
+The callback receives the current cached value (or default if cache miss) and returns:
+- `{:cache, value}` - cache and return the value
+- `{:ignore, value}` - return value without modifying cache
+- `{:pcache, cache_value, return_value}` - cache one value, return another
+
+
 ## Cache Versioning
 
 ColdStorage uses versions to manage cache invalidation. When you change the
