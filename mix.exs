@@ -32,7 +32,7 @@ defmodule ColdStorage.MixProject do
       {:briefly, "~> 0.5.1", only: [:test]},
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
       {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false},
-      {:ex_doc, "~> 0.38", only: [:dev, :test, :doc], runtime: false}
+      {:ex_doc, "~> 0.40", only: [:dev, :test, :doc], runtime: false}
     ]
   end
 
