@@ -1,5 +1,15 @@
 # ColdStorage
 
+<!-- rdmx :badges
+    hexpm         : "cold_storage?color=4e2a8e"
+    github_action : "lud/cold_storage/elixir.yaml?label=CI&branch=main"
+    license       : cold_storage
+    -->
+[![hex.pm Version](https://img.shields.io/hexpm/v/cold_storage?color=4e2a8e)](https://hex.pm/packages/cold_storage)
+[![Build Status](https://img.shields.io/github/actions/workflow/status/lud/cold_storage/elixir.yaml?label=CI&branch=main)](https://github.com/lud/cold_storage/actions/workflows/elixir.yaml?query=branch%3Amain)
+[![License](https://img.shields.io/hexpm/l/cold_storage.svg)](https://hex.pm/packages/cold_storage)
+<!-- rdmx /:badges -->
+
 A simple file-based caching system for Elixir that stores serialized terms on
 disk.
 
@@ -25,13 +35,15 @@ performance, and when the Elixir runtime is started multiple times.
 
 Add `cold_storage` to your list of dependencies in `mix.exs`:
 
+<!-- rdmx :app_dep vsn:$app_vsn -->
 ```elixir
 def deps do
   [
-    {:cold_storage, "~> 0.1.0"}
+    {:cold_storage, "~> 0.14"},
   ]
 end
 ```
+<!-- rdmx /:app_dep -->
 
 ## Quick Start
 
