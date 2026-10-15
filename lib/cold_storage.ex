@@ -8,9 +8,8 @@ defmodule ColdStorage do
 
   `ColdStorage` provides a versioned cache storage mechanism that saves data to
   the filesystem. Each cache instance has a directory and version, allowing for
-  cache invalidation by changing the version number.
-
-
+  cache invalidation by changing the version number. Entries can also expire
+  after a time-to-live, see `with_ttl/2`.
 
   ## Examples
 
@@ -20,11 +19,25 @@ defmodule ColdStorage do
 
   """
 
-  @enforce_keys [:dir, :vsn, :enabled]
-  defstruct @enforce_keys
+  @enforce_keys [:dir, :vsn]
+  defstruct @enforce_keys ++ [enabled: true, ttl: :infinity]
 
-  @type t :: %__MODULE__{dir: String.t(), vsn: integer() | binary(), enabled: boolean()}
-  @type option :: {:dir, String.t()} | {:vsn, integer() | binary()} | {:enabled, boolean()}
+  @type t :: %__MODULE__{
+          dir: String.t(),
+          vsn: integer() | binary(),
+          enabled: boolean(),
+          ttl: timeout()
+        }
+
+  @type ttl ::
+          timeout()
+          | [{:week | :day | :hour | :minute | :second | :millisecond, non_neg_integer()}]
+
+  @type option ::
+          {:dir, String.t()}
+          | {:vsn, integer() | binary()}
+          | {:enabled, boolean()}
+          | {:ttl, ttl}
 
   @doc """
   Creates a new ColdStorage configuration.
@@ -40,11 +53,13 @@ defmodule ColdStorage do
       Accepts anything that returns a valid unix directory name when given to
       `Kernel.to_string/1`. Defaults to `1`.
     * `:enabled` - Whether the cache is enabled. Defaults to `true`.
+    * `:ttl` - The time-to-live of cache entries. Accepts the same values as
+      `with_ttl/2`. Defaults to `:infinity`.
 
   ## Examples
 
       iex> ColdStorage.new()
-      %ColdStorage{dir: "/tmp/cold-storage", vsn: 1, enabled: true}
+      %ColdStorage{dir: "/tmp/cold-storage", vsn: 1, enabled: true, ttl: :infinity}
 
       iex> ColdStorage.new(dir: "/var/cache", vsn: "my-cache-1", enabled: false)
       %ColdStorage{dir: "/var/cache", vsn: "my-cache-1", enabled: false}
@@ -54,13 +69,43 @@ defmodule ColdStorage do
   def new(opts \\ []) do
     dir = Keyword.get_lazy(opts, :dir, &default_dir/0)
     vsn = Keyword.get(opts, :vsn, 1)
+    ttl = parse_ttl(Keyword.get(opts, :ttl, :infinity))
     enabled = Keyword.get(opts, :enabled, true)
-    %__MODULE__{dir: dir, vsn: vsn, enabled: enabled}
+    %__MODULE__{dir: dir, vsn: vsn, enabled: enabled, ttl: ttl}
   end
 
   @spec default_dir() :: String.t()
   defp default_dir do
     Path.join(System.tmp_dir!(), "cold-storage")
+  end
+
+  defp parse_ttl(ttl) when is_integer(ttl) and ttl >= 0, do: ttl
+  defp parse_ttl(ttl) when is_list(ttl), do: to_timeout(ttl)
+  defp parse_ttl(:infinity), do: :infinity
+  defp parse_ttl(ttl), do: raise(ArgumentError, "invalid ttl: #{inspect(ttl)}")
+
+  @doc """
+  Returns the configuration with the given time-to-live for cache entries.
+
+  The TTL accepts `:infinity`, a duration in milliseconds, or a keyword list
+  accepted by `Kernel.to_timeout/1`. It is stored in milliseconds. Other values
+  raise an `ArgumentError`.
+
+      iex> cs = ColdStorage.new()
+      iex> ColdStorage.with_ttl(cs, minute: 5).ttl
+      300000
+      iex> ColdStorage.with_ttl(cs, :timer.hours(1)).ttl
+      3600000
+
+  The TTL applies to all keys of the configuration. It is checked on read against
+  the modification time of the cache file, so it also applies to entries written
+  before the TTL was set. An expired entry is a cache miss, and the next write
+  replaces it. File modification times have a precision of one second, so the TTL
+  is effectively rounded down to whole seconds.
+  """
+  @spec with_ttl(t, ttl) :: t
+  def with_ttl(%__MODULE__{} = cs, ttl) do
+    %{cs | ttl: parse_ttl(ttl)}
   end
 
   @doc """
@@ -246,6 +291,7 @@ defmodule ColdStorage do
   even if a valid cache file exists.
 
   Returns `{:hit, value}` if the value is found in the cache, or `:miss` if not.
+  Entries older than the configured TTL are a `:miss` (see `with_ttl/2`).
   Raises an error if the cache file cannot be read (except for `:enoent`).
 
   ## Parameters
@@ -256,7 +302,7 @@ defmodule ColdStorage do
   ## Returns
 
     * `{:hit, value}` - The cached value was found
-    * `:miss` - The value was not found in the cache
+    * `:miss` - The value was not found in the cache, or has expired
 
   ## Examples
 
@@ -276,10 +322,25 @@ defmodule ColdStorage do
   def fetch_cache(cs, key) do
     path = path_of(cs, key)
 
-    case File.read(path) do
+    case read_file_with_ttl(path, cs.ttl) do
       {:ok, bin} -> deserialize_cache(bin)
+      {:error, :expired} -> :miss
       {:error, :enoent} -> :miss
       {:error, e} -> raise "could not read from cache: #{inspect(e)}"
+    end
+  end
+
+  defp read_file_with_ttl(path, :infinity), do: File.read(path)
+
+  defp read_file_with_ttl(path, ttl) do
+    with {:ok, %{mtime: mtime}} <- File.stat(path, time: :posix),
+         now = System.os_time(:second),
+         expires_at = mtime + div(ttl, 1000),
+         true <- now <= expires_at do
+      File.read(path)
+    else
+      false -> {:error, :expired}
+      {:error, _} = err -> err
     end
   end
 

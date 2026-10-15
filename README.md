@@ -37,7 +37,7 @@ Add `cold_storage` to your list of dependencies in `mix.exs`:
 
 <!-- rdmx :app_dep vsn:$app_vsn -->
 ```elixir
-def deps do
+defp deps do
   [
     {:cold_storage, "~> 0.14"},
   ]
@@ -181,8 +181,39 @@ cs_v1 = ColdStorage.new(vsn: 1)
 cs_v2 = ColdStorage.new(vsn: 2)
 ```
 
-You can use anythign as the `vsn` as long as `to_string(vsn)` returns a valid
+You can use anything as the `vsn` as long as `to_string(vsn)` returns a valid
 directory name.
+
+## Expiration (TTL)
+
+Cache entries can expire after a time-to-live. The TTL is set for the whole
+cache configuration, either in `new/1` or with `with_ttl/2`. It accepts
+`:infinity` (the default), a duration in milliseconds, or a keyword list accepted
+by `to_timeout/1`.
+
+```elixir
+cs = ColdStorage.new(ttl: [hour: 1])
+
+# Equivalent forms
+cs = ColdStorage.new() |> ColdStorage.with_ttl(hour: 1)
+cs = ColdStorage.new() |> ColdStorage.with_ttl(:timer.hours(1))
+```
+
+An entry is expired when its file was last written longer ago than the TTL.
+Expired entries are reported as a cache miss, so `cached/3` calls the generator
+again and stores the new value.
+
+The TTL is checked on read, so it applies to every entry on disk, including
+entries written with a different TTL. Use this to refresh old data by reading with
+a shorter TTL:
+
+```elixir
+fresh = ColdStorage.with_ttl(cs, minute: 5)
+ColdStorage.cached(fresh, "users", fn -> {:cache, fetch_users()} end)
+```
+
+File modification times have a precision of one second, so the TTL is
+effectively rounded down to whole seconds.
 
 ## Direct Cache Operations
 
@@ -233,7 +264,6 @@ For example:
 ## Limitations
 
 - ⚠️ **Slow**: Every operation hits the filesystem with no optimization
-- **No TTL**: Cached values never expire automatically
 - **No size limits**: The cache can grow unbounded
 - **No concurrency control**: Concurrent writes to the same key are managed by
   the operating system as the cache uses direct file operations

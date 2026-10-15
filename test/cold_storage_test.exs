@@ -697,4 +697,237 @@ defmodule ColdStorageTest do
       assert {:hit, ^final_cache} = ColdStorage.fetch_cache(cs, :queries)
     end
   end
+
+  describe "new/1 :ttl option" do
+    test "defaults ttl to :infinity" do
+      assert ColdStorage.new().ttl == :infinity
+    end
+
+    test "accepts :infinity" do
+      assert ColdStorage.new(ttl: :infinity).ttl == :infinity
+    end
+
+    test "accepts an integer in milliseconds" do
+      assert ColdStorage.new(ttl: 5000).ttl == 5000
+      assert ColdStorage.new(ttl: :timer.minutes(5)).ttl == 300_000
+    end
+
+    test "accepts a duration keyword list and stores it in milliseconds" do
+      assert ColdStorage.new(ttl: [minute: 5]).ttl == 300_000
+      assert ColdStorage.new(ttl: [hour: 1, minute: 30]).ttl == 5_400_000
+      assert ColdStorage.new(ttl: [day: 1]).ttl == 86_400_000
+    end
+
+    test "raises on invalid ttl" do
+      assert_raise ArgumentError, fn -> ColdStorage.new(ttl: -1) end
+      assert_raise ArgumentError, fn -> ColdStorage.new(ttl: [minutes: 5]) end
+      assert_raise ArgumentError, fn -> ColdStorage.new(ttl: "5m") end
+      assert_raise ArgumentError, fn -> ColdStorage.new(ttl: 1.5) end
+      assert_raise ArgumentError, fn -> ColdStorage.new(ttl: nil) end
+    end
+  end
+
+  describe "with_ttl/2" do
+    test "sets ttl from an integer in milliseconds", %{test_dir: test_dir} do
+      cs = ColdStorage.new(dir: test_dir) |> ColdStorage.with_ttl(:timer.minutes(5))
+      assert cs.ttl == 300_000
+    end
+
+    test "sets ttl from a duration keyword list", %{test_dir: test_dir} do
+      cs = ColdStorage.new(dir: test_dir) |> ColdStorage.with_ttl(minute: 5)
+      assert cs.ttl == 300_000
+    end
+
+    test "sets ttl back to :infinity", %{test_dir: test_dir} do
+      cs = ColdStorage.new(dir: test_dir, ttl: [minute: 5]) |> ColdStorage.with_ttl(:infinity)
+      assert cs.ttl == :infinity
+    end
+
+    test "preserves the other fields", %{test_dir: test_dir} do
+      cs =
+        ColdStorage.new(dir: test_dir, vsn: "v2", enabled: false)
+        |> ColdStorage.with_ttl(minute: 1)
+
+      assert cs.dir == test_dir
+      assert cs.vsn == "v2"
+      assert cs.enabled == false
+      assert cs.ttl == 60_000
+    end
+
+    test "raises on invalid ttl", %{test_dir: test_dir} do
+      cs = ColdStorage.new(dir: test_dir)
+
+      assert_raise ArgumentError, fn -> ColdStorage.with_ttl(cs, -1) end
+      assert_raise ArgumentError, fn -> ColdStorage.with_ttl(cs, minutes: 5) end
+      assert_raise ArgumentError, fn -> ColdStorage.with_ttl(cs, "5m") end
+    end
+  end
+
+  describe "fetch_cache/2 with ttl" do
+    test "returns a hit for a fresh entry", %{test_dir: test_dir} do
+      cs = ColdStorage.new(dir: test_dir, ttl: [minute: 5])
+
+      ColdStorage.put_cache(cs, "key", "value")
+      assert {:hit, "value"} = ColdStorage.fetch_cache(cs, "key")
+    end
+
+    test "returns a hit for an entry younger than the ttl", %{test_dir: test_dir} do
+      cs = ColdStorage.new(dir: test_dir, ttl: [minute: 5])
+
+      ColdStorage.put_cache(cs, "key", "value")
+      age_entry(cs, "key", 4 * 60)
+
+      assert {:hit, "value"} = ColdStorage.fetch_cache(cs, "key")
+    end
+
+    test "returns :miss for an entry older than the ttl", %{test_dir: test_dir} do
+      cs = ColdStorage.new(dir: test_dir, ttl: [minute: 5])
+
+      ColdStorage.put_cache(cs, "key", "value")
+      age_entry(cs, "key", 6 * 60)
+
+      assert :miss = ColdStorage.fetch_cache(cs, "key")
+    end
+
+    test "never expires entries with :infinity ttl", %{test_dir: test_dir} do
+      cs = ColdStorage.new(dir: test_dir, ttl: :infinity)
+
+      ColdStorage.put_cache(cs, "key", "value")
+      age_entry(cs, "key", 10 * 365 * 86_400)
+
+      assert {:hit, "value"} = ColdStorage.fetch_cache(cs, "key")
+    end
+
+    test "ttl is evaluated at read time against existing entries", %{test_dir: test_dir} do
+      cs = ColdStorage.new(dir: test_dir)
+
+      ColdStorage.put_cache(cs, "key", "value")
+      age_entry(cs, "key", 2 * 3600)
+
+      assert {:hit, "value"} = ColdStorage.fetch_cache(cs, "key")
+      assert {:hit, "value"} = ColdStorage.fetch_cache(ColdStorage.with_ttl(cs, hour: 3), "key")
+      assert :miss = ColdStorage.fetch_cache(ColdStorage.with_ttl(cs, hour: 1), "key")
+    end
+
+    test "does not delete the expired file", %{test_dir: test_dir} do
+      cs = ColdStorage.new(dir: test_dir, ttl: [minute: 5])
+
+      ColdStorage.put_cache(cs, "key", "value")
+      age_entry(cs, "key", 3600)
+
+      assert :miss = ColdStorage.fetch_cache(cs, "key")
+      assert File.exists?(ColdStorage.path_of(cs, "key"))
+    end
+
+    test "put_cache refreshes an expired entry", %{test_dir: test_dir} do
+      cs = ColdStorage.new(dir: test_dir, ttl: [minute: 5])
+
+      ColdStorage.put_cache(cs, "key", "old")
+      age_entry(cs, "key", 3600)
+      assert :miss = ColdStorage.fetch_cache(cs, "key")
+
+      ColdStorage.put_cache(cs, "key", "new")
+      assert {:hit, "new"} = ColdStorage.fetch_cache(cs, "key")
+    end
+
+    test "returns :miss for non-existent key", %{test_dir: test_dir} do
+      cs = ColdStorage.new(dir: test_dir, ttl: [minute: 5])
+      assert :miss = ColdStorage.fetch_cache(cs, "nonexistent")
+    end
+
+    test "returns :miss when disabled even for a fresh entry", %{test_dir: test_dir} do
+      cs = ColdStorage.new(dir: test_dir, ttl: [minute: 5])
+      ColdStorage.put_cache(cs, "key", "value")
+
+      assert :miss = ColdStorage.fetch_cache(%{cs | enabled: false}, "key")
+    end
+  end
+
+  describe "cached/3, cached_ok/3 and with_cache with ttl" do
+    test "cached/3 does not call the generator for a fresh entry", %{test_dir: test_dir} do
+      cs = ColdStorage.new(dir: test_dir, ttl: [minute: 5])
+
+      ColdStorage.put_cache(cs, "key", "cached")
+      age_entry(cs, "key", 60)
+
+      assert "cached" = ColdStorage.cached(cs, "key", fn -> raise "should not be called" end)
+    end
+
+    test "cached/3 regenerates and recaches an expired entry", %{test_dir: test_dir} do
+      cs = ColdStorage.new(dir: test_dir, ttl: [minute: 5])
+
+      ColdStorage.put_cache(cs, "key", "old")
+      age_entry(cs, "key", 3600)
+
+      assert "new" = ColdStorage.cached(cs, "key", fn -> {:cache, "new"} end)
+      assert {:hit, "new"} = ColdStorage.fetch_cache(cs, "key")
+      assert "new" = ColdStorage.cached(cs, "key", fn -> raise "should not be called" end)
+    end
+
+    test "cached/3 with :ignore leaves the expired entry expired", %{test_dir: test_dir} do
+      cs = ColdStorage.new(dir: test_dir, ttl: [minute: 5])
+
+      ColdStorage.put_cache(cs, "key", "old")
+      age_entry(cs, "key", 3600)
+
+      assert "temp" = ColdStorage.cached(cs, "key", fn -> {:ignore, "temp"} end)
+      assert :miss = ColdStorage.fetch_cache(cs, "key")
+    end
+
+    test "cached_ok/3 regenerates an expired entry", %{test_dir: test_dir} do
+      cs = ColdStorage.new(dir: test_dir, ttl: [minute: 5])
+
+      assert {:ok, 1} = ColdStorage.cached_ok(cs, "key", fn -> {:ok, 1} end)
+      age_entry(cs, "key", 3600)
+
+      assert {:ok, 2} = ColdStorage.cached_ok(cs, "key", fn -> {:ok, 2} end)
+      assert {:hit, {:ok, 2}} = ColdStorage.fetch_cache(cs, "key")
+    end
+
+    test "with_cache receives the default for an expired entry", %{test_dir: test_dir} do
+      cs = ColdStorage.new(dir: test_dir, ttl: [minute: 5])
+
+      ColdStorage.put_cache(cs, "key", "stale")
+      age_entry(cs, "key", 3600)
+
+      result =
+        ColdStorage.with_cache(cs, "key", "default", fn val ->
+          assert val == "default"
+          {:cache, "fresh"}
+        end)
+
+      assert result == "fresh"
+      assert {:hit, "fresh"} = ColdStorage.fetch_cache(cs, "key")
+    end
+
+    test "with_cache receives the cached value for a fresh entry", %{test_dir: test_dir} do
+      cs = ColdStorage.new(dir: test_dir, ttl: [minute: 5])
+
+      ColdStorage.put_cache(cs, "key", "cached")
+
+      result =
+        ColdStorage.with_cache(cs, "key", "default", fn val ->
+          assert val == "cached"
+          {:ignore, val}
+        end)
+
+      assert result == "cached"
+    end
+
+    test "with_cache :ignore on a hit does not refresh the entry age", %{test_dir: test_dir} do
+      cs = ColdStorage.new(dir: test_dir, ttl: [minute: 5])
+
+      ColdStorage.put_cache(cs, "key", "cached")
+      aged_mtime = age_entry(cs, "key", 4 * 60)
+
+      assert "cached" = ColdStorage.with_cache(cs, "key", fn val -> {:ignore, val} end)
+      assert %{mtime: ^aged_mtime} = File.stat!(ColdStorage.path_of(cs, "key"), time: :posix)
+    end
+  end
+
+  defp age_entry(cs, key, seconds) do
+    mtime = System.os_time(:second) - seconds
+    File.touch!(ColdStorage.path_of(cs, key), mtime)
+    mtime
+  end
 end

@@ -9,7 +9,7 @@ defmodule ColdStorage.MixProject do
       app: :cold_storage,
       description: "A simple hard drive persistent cache for scripting purposes.",
       version: @version,
-      elixir: "~> 1.15",
+      elixir: "~> 1.17",
       start_permanent: Mix.env() == :prod,
       source_url: @source_url,
       deps: deps(),
