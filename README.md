@@ -39,7 +39,7 @@ Add `cold_storage` to your list of dependencies in `mix.exs`:
 ```elixir
 defp deps do
   [
-    {:cold_storage, "~> 0.14"},
+    {:cold_storage, "~> 0.15"},
   ]
 end
 ```
